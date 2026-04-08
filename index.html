@@ -858,50 +858,85 @@ function BrainDumpModal({ jobs, apiKey, onAdd, onClose, addToast }) {
   const SYSTEM_PROMPT_TOKENS = 300; // fixed overhead for system prompt
   const jobContext = jobs.map(j => `${j.code}: ${j.name}`).join(', ') || 'No jobs set up yet';
 
-  async function callClaude(messages) {
+  async function callClaude(messages, dumpText) {
+    // Build a single clean user message that has the instructions + the raw dump
+    const today = new Date().toISOString().slice(0, 10);
+    const jobList = jobContext || 'none';
+
+    const instructionPrefix = `Convert every line of this brain dump into a JSON action item. Return ONLY a JSON array, no other text.
+
+Rules:
+1. Every line becomes at least one item — nothing is skipped.
+2. Fix typos: tmr=tomorrow, monay=Monday, ned=need, gt=got, si=is, fgo=go, gewnerate=generate, fr=for, tmorror=tomorrow, precon wal=precon walk, fa=fire alarm, pco=PCO, oac=OAC, edj=EDJ, hdr=HDR, ici=ICI, sdj=SDJ, ab=about, cheklist=checklist, brandw all=brand wall, fur out=furr out.
+3. Write each item as an imperative: "Send PCO to Ryan", "Schedule weekly subcontractor meeting".
+4. Status/completed lines become logs: "Log: Ceiling and wall close-in inspections completed".
+5. category must be exactly one of: office, field, engineer, architect, personal, or empty string.
+   office = admin/emails/reports/scheduling/submittals/contracts
+   field = site work/inspections/physical tasks/material/installs
+   engineer = engineering items
+   architect = drawings/specs/architecture
+   personal = personal errands
+6. Known jobs: ${jobList}. Match jobCode by name similarity (hdr=HDR, edward jones=EDJ, edj=EDJ, ici=ICI, sdj=SDJ, counter culture=that job). Leave empty if no match.
+7. owner = initials of person named as responsible. TJ=TJ, Ryan=RY, Chuck=CH, Jeff=JF, Cameron=CM. Empty if none.
+8. dueDate = ${today} if time is implied (tomorrow/today/morning/Monday/by Xam). Empty otherwise.
+9. Output format per item: {"text":"...","category":"...","jobCode":"...","owner":"...","dueDate":"..."}
+
+Brain dump to process:
+`;
+
+    // Replace the user message content with instruction + dump prepended
+    const enrichedMessages = messages.map((m, i) => {
+      if (i === 0 && m.role === 'user') {
+        if (typeof m.content === 'string') {
+          return { ...m, content: instructionPrefix + m.content };
+        }
+        // vision message — prepend instruction as first text block
+        const blocks = Array.isArray(m.content) ? m.content : [m.content];
+        return { ...m, content: [{ type: 'text', text: instructionPrefix }, ...blocks] };
+      }
+      return m;
+    });
+
     const body = {
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 2000,
-      system: `You are a construction project manager assistant. Your job is to convert EVERY line, thought, and note from a brain dump into a discrete action item or reminder. Return ONLY a valid JSON array. No markdown, no preamble, no explanation — raw JSON array only.
-
-Known jobs/projects: ${jobContext}
-
-CRITICAL RULES:
-- Convert EVERYTHING into an action item. Status updates, observations, notes, meeting mentions, material orders, inspections, conversations to have, things to verify, things to schedule, things to send, things received. If it was worth writing down, it becomes an action item.
-- Never skip a line or thought. If unsure, create a reminder item.
-- Fix ALL typos and shorthand in the text field. Examples: tmr=tomorrow, edj=EDJ, hdr=HDR, ici=ICI, sdj=SDJ, fa=fire alarm, pco=PCO, oac=OAC, precon wal=precon walk, ab=about, gt=got, si=is, ned=need, fgo=go, monay=Monday, tmorror=tomorrow, gewnerate=generate, fr=for, cheklist=checklist, ab=about, edj=Edward Jones.
-- Write each item as a clear imperative action: "Send PCO to Ryan", "Schedule subcontractor meeting", "Pay HDR permit invoice".
-- For status/completed items, write as a log: "Log: Ceiling and wall close-in inspections completed today".
-- If a due date is implied (tomorrow, by 11am, Monday, today, morning), set dueDate to ${new Date().toISOString().slice(0,10)}.
-- Categorize by content: scheduling/admin/docs/emails/reports/submittals = office. Site visits/inspections/field work/material/physical tasks = field. Engineering items = engineer. Architecture/drawings/specs = architect. Personal errands = personal.
-- Match jobCode to known jobs by name similarity. hdr or HDR = HDR job. edj or edward jones = EDJ job. ici or ICI = ICI job. sdj or SDJ = SDJ job. counter culture = that job if listed.
-- Extract owner initials when a person is named as responsible: "TJ to do X" = owner TJ. "Ryan to order" = owner RY. "Chuck to review" = owner CH.
-- Do not merge separate tasks. One task = one item.
-
-Each item in the array:
-{
-  "text": "Clear imperative action written in full English with typos corrected",
-  "category": "office"|"field"|"engineer"|"architect"|"personal"|"",
-  "jobCode": "matching job code or empty string",
-  "owner": "initials of responsible party or empty string",
-  "dueDate": "YYYY-MM-DD if time-sensitive, else empty string"
-}`,
-      messages
+      max_tokens: 4000,
+      system: 'You are a JSON API for a construction project management app. You ONLY output raw JSON arrays. Never output markdown, explanations, or any text outside the JSON array brackets.',
+      messages: enrichedMessages
     };
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
       body: JSON.stringify(body)
     });
+
     const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    const raw = data.content.map(b => b.text || '').join('');
-    // Strip fences then extract first JSON array, tolerant of surrounding text
-    const stripped = raw.replace(/```json|```/g, '').trim();
-    const match = stripped.match(/\[[\s\S]*\]/);
-    if (!match) throw new Error('No action items found — try rephrasing your dump.');
-    return JSON.parse(match[0]);
+    if (data.error) throw new Error('API error: ' + data.error.message);
+
+    const raw = (data.content || []).map(b => b.text || '').join('').trim();
+    console.log('[FIELDBOOK] Raw API response:', raw.slice(0, 500));
+
+    // Try direct parse first
+    try { return JSON.parse(raw); } catch(_) {}
+
+    // Strip any markdown fences
+    const stripped = raw.replace(/^```(?:json)?\n?|\n?```$/g, '').trim();
+    try { return JSON.parse(stripped); } catch(_) {}
+
+    // Extract first [...] block
+    const match = stripped.match(/\[([\s\S]*)\]/);
+    if (match) {
+      try { return JSON.parse('[' + match[1] + ']'); } catch(_) {}
+      try { return JSON.parse(match[0]); } catch(_) {}
+    }
+
+    // Nothing worked — throw with raw preview for debugging
+    throw new Error('Could not parse AI response. Open browser console for details. Preview: ' + raw.slice(0, 120));
   }
 
   // ── Request estimate → show confirm → then run
@@ -937,17 +972,17 @@ Each item in the array:
     try {
       let items;
       if (type === 'text') {
-        items = await callClaude([{ role: 'user', content: `Extract action items from this brain dump:\n\n${text}` }]);
+        items = await callClaude([{ role: 'user', content: text }]);
       } else if (type === 'image') {
         items = await callClaude([{
           role: 'user',
           content: [
             { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageData } },
-            { type: 'text', text: 'Read all handwritten and printed text in this image, then extract all action items as JSON.' }
+            { type: 'text', text: 'Handwritten notebook image. Read every word.' }
           ]
         }]);
       } else if (type === 'file') {
-        items = await callClaude([{ role: 'user', content: `Extract action items from this file:\n\n${fileContent}` }]);
+        items = await callClaude([{ role: 'user', content: fileContent }]);
       }
       setPreview((items || []).map(i => ({ ...i, id: uid(), keep: true })));
     } catch (e) {
