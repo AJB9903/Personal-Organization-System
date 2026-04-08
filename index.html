@@ -861,29 +861,31 @@ function BrainDumpModal({ jobs, apiKey, onAdd, onClose, addToast }) {
   async function callClaude(messages) {
     const body = {
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: `You are a construction project manager assistant. Extract all action items / deliverables from the input and return ONLY a valid JSON array. No markdown, no explanation, only JSON.
+      max_tokens: 2000,
+      system: `You are a construction project manager assistant. Your job is to convert EVERY line, thought, and note from a brain dump into a discrete action item or reminder. Return ONLY a valid JSON array. No markdown, no preamble, no explanation — raw JSON array only.
 
 Known jobs/projects: ${jobContext}
 
-Each item:
-{
-  "text": "clear description of what needs to be done",
-  "category": "office"|"field"|"engineer"|"architect"|"personal"|"",
-  "jobCode": "matching job code from known jobs or empty string",
-  "owner": "initials if mentioned or empty",
-  "dueDate": "YYYY-MM-DD if mentioned or empty"
-}
+CRITICAL RULES:
+- Convert EVERYTHING into an action item. Status updates, observations, notes, meeting mentions, material orders, inspections, conversations to have, things to verify, things to schedule, things to send, things received. If it was worth writing down, it becomes an action item.
+- Never skip a line or thought. If unsure, create a reminder item.
+- Fix ALL typos and shorthand in the text field. Examples: tmr=tomorrow, edj=EDJ, hdr=HDR, ici=ICI, sdj=SDJ, fa=fire alarm, pco=PCO, oac=OAC, precon wal=precon walk, ab=about, gt=got, si=is, ned=need, fgo=go, monay=Monday, tmorror=tomorrow, gewnerate=generate, fr=for, cheklist=checklist, ab=about, edj=Edward Jones.
+- Write each item as a clear imperative action: "Send PCO to Ryan", "Schedule subcontractor meeting", "Pay HDR permit invoice".
+- For status/completed items, write as a log: "Log: Ceiling and wall close-in inspections completed today".
+- If a due date is implied (tomorrow, by 11am, Monday, today, morning), set dueDate to ${new Date().toISOString().slice(0,10)}.
+- Categorize by content: scheduling/admin/docs/emails/reports/submittals = office. Site visits/inspections/field work/material/physical tasks = field. Engineering items = engineer. Architecture/drawings/specs = architect. Personal errands = personal.
+- Match jobCode to known jobs by name similarity. hdr or HDR = HDR job. edj or edward jones = EDJ job. ici or ICI = ICI job. sdj or SDJ = SDJ job. counter culture = that job if listed.
+- Extract owner initials when a person is named as responsible: "TJ to do X" = owner TJ. "Ryan to order" = owner RY. "Chuck to review" = owner CH.
+- Do not merge separate tasks. One task = one item.
 
-Rules:
-- category "office" = office-based admin/coordination deliverable
-- category "field" = site/field deliverable  
-- category "engineer" = engineering-related item
-- category "architect" = architecture-related item
-- category "personal" = personal task
-- Match jobCode to known jobs by name/code similarity
-- Only extract concrete action items, not general observations
-- If handwritten OCR, correct obvious transcription errors`,
+Each item in the array:
+{
+  "text": "Clear imperative action written in full English with typos corrected",
+  "category": "office"|"field"|"engineer"|"architect"|"personal"|"",
+  "jobCode": "matching job code or empty string",
+  "owner": "initials of responsible party or empty string",
+  "dueDate": "YYYY-MM-DD if time-sensitive, else empty string"
+}`,
       messages
     };
 
