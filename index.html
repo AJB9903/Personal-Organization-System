@@ -537,6 +537,57 @@
     padding: 20px 0;
   }
 
+  /* COST ESTIMATE */
+  .cost-panel {
+    background: var(--bg3);
+    border: 1px solid rgba(245,158,11,0.3);
+    border-radius: 3px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+  }
+  .cost-panel-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .cost-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .cost-cell { text-align: center; }
+  .cost-cell-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--text);
+    line-height: 1;
+    margin-bottom: 3px;
+  }
+  .cost-cell-val.highlight { color: var(--amber); font-size: 22px; }
+  .cost-cell-lbl {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    color: var(--text3);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .cost-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .cost-disclaimer {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--text3);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+  .cost-actions { display: flex; gap: 8px; }
+
   .no-print { }
   hr.divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
 
@@ -710,21 +761,104 @@ function ItemModal({ item, jobs, onSave, onClose }) {
   );
 }
 
+// ─── Cost Estimation ─────────────────────────────────────────────────────────
+// Pricing: claude-sonnet-4-20250514
+// Input:  $3.00 / 1M tokens
+// Output: $15.00 / 1M tokens
+const INPUT_COST_PER_TOKEN  = 3.00  / 1_000_000;
+const OUTPUT_COST_PER_TOKEN = 15.00 / 1_000_000;
+const EST_OUTPUT_TOKENS = 500; // conservative output estimate
+
+function estimateTextTokens(str) {
+  // ~4 chars per token is the standard rough estimate
+  return Math.ceil((str || '').length / 4);
+}
+
+function estimateImageTokens(base64str) {
+  // Anthropic charges by pixel count. We don't know dimensions from base64 alone,
+  // so estimate from byte size: base64 → raw bytes → approximate pixel count.
+  // A typical 1MP image ≈ 1500 tokens; scale linearly.
+  const rawBytes = Math.ceil((base64str || '').length * 0.75);
+  const estimatedMegapixels = rawBytes / 1_000_000;
+  return Math.max(800, Math.min(4000, Math.round(estimatedMegapixels * 1200 + 800)));
+}
+
+function buildEstimate(inputTokens) {
+  const outputTokens = EST_OUTPUT_TOKENS;
+  const inputCost    = inputTokens  * INPUT_COST_PER_TOKEN;
+  const outputCost   = outputTokens * OUTPUT_COST_PER_TOKEN;
+  const totalCost    = inputCost + outputCost;
+  return { inputTokens, outputTokens, inputCost, outputCost, totalCost };
+}
+
+function fmt(n) {
+  if (n < 0.001) return '<$0.001';
+  return '$' + n.toFixed(4);
+}
+
+// ─── Cost Confirm Panel ───────────────────────────────────────────────────────
+function CostConfirmPanel({ estimate, onConfirm, onCancel }) {
+  return (
+    <div className="cost-panel">
+      <div className="cost-panel-title">
+        <span>◈</span> Estimated API Cost
+      </div>
+      <div className="cost-grid">
+        <div className="cost-cell">
+          <div className="cost-cell-val">{estimate.inputTokens.toLocaleString()}</div>
+          <div className="cost-cell-lbl">Input Tokens</div>
+        </div>
+        <div className="cost-cell">
+          <div className="cost-cell-val">{estimate.outputTokens.toLocaleString()}</div>
+          <div className="cost-cell-lbl">Est. Output</div>
+        </div>
+        <div className="cost-cell">
+          <div className="cost-cell-val highlight">{fmt(estimate.totalCost)}</div>
+          <div className="cost-cell-lbl">Est. Total</div>
+        </div>
+      </div>
+      <hr className="cost-divider" />
+      <div className="cost-breakdown" style={{display:'flex',gap:24,marginBottom:10}}>
+        <span style={{fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'var(--text3)'}}>
+          Input {fmt(estimate.inputCost)}
+        </span>
+        <span style={{fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'var(--text3)'}}>
+          Output {fmt(estimate.outputCost)}
+        </span>
+        <span style={{fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'var(--text3)'}}>
+          Sonnet 4 · $3/$15 per MTok
+        </span>
+      </div>
+      <div className="cost-disclaimer">
+        Estimate only. Actual cost may vary based on final token count. Output tokens are estimated at {EST_OUTPUT_TOKENS} — more extracted items = slightly higher.
+      </div>
+      <div className="cost-actions">
+        <button className="btn btn-primary" onClick={onConfirm}>Proceed</button>
+        <button className="btn" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Brain Dump Modal ─────────────────────────────────────────────────────────
 function BrainDumpModal({ jobs, apiKey, onAdd, onClose, addToast }) {
   const [tab, setTab] = useState('text');
   const [text, setText] = useState('');
   const [file, setFile] = useState(null);
+  const [fileContent, setFileContent] = useState('');
   const [imageData, setImageData] = useState(null);
   const [imageMediaType, setImageMediaType] = useState('image/jpeg');
   const [processing, setProcessing] = useState(false);
   const [preview, setPreview] = useState([]);
   const [dragOver, setDragOver] = useState(false);
+  const [estimate, setEstimate] = useState(null); // cost estimate pending confirmation
+  const [pendingAction, setPendingAction] = useState(null); // fn to run after confirm
   const fileRef = useRef();
 
+  const SYSTEM_PROMPT_TOKENS = 300; // fixed overhead for system prompt
   const jobContext = jobs.map(j => `${j.code}: ${j.name}`).join(', ') || 'No jobs set up yet';
 
-  async function callClaude(messages, isVision) {
+  async function callClaude(messages) {
     const body = {
       model: 'claude-sonnet-4-20250514',
       max_tokens: 1000,
@@ -765,47 +899,52 @@ Rules:
     return JSON.parse(clean);
   }
 
-  async function processText() {
-    if (!text.trim()) return;
+  // ── Request estimate → show confirm → then run
+  function requestProcess(type) {
     if (!apiKey) { addToast('API key required — set it in Settings', 'error'); return; }
-    setProcessing(true);
-    try {
-      const items = await callClaude([{ role: 'user', content: `Extract action items from this brain dump:\n\n${text}` }]);
-      setPreview(items.map(i => ({ ...i, id: uid(), keep: true })));
-    } catch (e) {
-      addToast('AI error: ' + e.message, 'error');
+
+    let inputTokens = SYSTEM_PROMPT_TOKENS;
+    if (type === 'text') {
+      inputTokens += estimateTextTokens(`Extract action items from this brain dump:\n\n${text}`);
+    } else if (type === 'image') {
+      inputTokens += estimateImageTokens(imageData) + estimateTextTokens('Read all handwritten and printed text in this image, then extract all action items as JSON.');
+    } else if (type === 'file') {
+      inputTokens += estimateTextTokens(`Extract action items from this file:\n\n${fileContent}`);
     }
-    setProcessing(false);
+
+    setEstimate(buildEstimate(inputTokens));
+    setPendingAction(() => () => runProcess(type));
   }
 
-  async function processImage() {
-    if (!imageData) return;
-    if (!apiKey) { addToast('API key required — set it in Settings', 'error'); return; }
-    setProcessing(true);
-    try {
-      const messages = [{
-        role: 'user',
-        content: [
-          { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageData } },
-          { type: 'text', text: 'Read all handwritten and printed text in this image, then extract all action items as JSON.' }
-        ]
-      }];
-      const items = await callClaude(messages, true);
-      setPreview(items.map(i => ({ ...i, id: uid(), keep: true })));
-    } catch (e) {
-      addToast('AI error: ' + e.message, 'error');
-    }
-    setProcessing(false);
+  function confirmAndRun() {
+    setEstimate(null);
+    if (pendingAction) pendingAction();
+    setPendingAction(null);
   }
 
-  async function processFile() {
-    if (!file) return;
-    if (!apiKey) { addToast('API key required — set it in Settings', 'error'); return; }
+  function cancelEstimate() {
+    setEstimate(null);
+    setPendingAction(null);
+  }
+
+  async function runProcess(type) {
     setProcessing(true);
     try {
-      const content = await file.text();
-      const items = await callClaude([{ role: 'user', content: `Extract action items from this file:\n\n${content}` }]);
-      setPreview(items.map(i => ({ ...i, id: uid(), keep: true })));
+      let items;
+      if (type === 'text') {
+        items = await callClaude([{ role: 'user', content: `Extract action items from this brain dump:\n\n${text}` }]);
+      } else if (type === 'image') {
+        items = await callClaude([{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageData } },
+            { type: 'text', text: 'Read all handwritten and printed text in this image, then extract all action items as JSON.' }
+          ]
+        }]);
+      } else if (type === 'file') {
+        items = await callClaude([{ role: 'user', content: `Extract action items from this file:\n\n${fileContent}` }]);
+      }
+      setPreview((items || []).map(i => ({ ...i, id: uid(), keep: true })));
     } catch (e) {
       addToast('AI error: ' + e.message, 'error');
     }
@@ -818,6 +957,13 @@ Rules:
     const reader = new FileReader();
     reader.onload = e => setImageData(e.target.result.split(',')[1]);
     reader.readAsDataURL(f);
+  }
+
+  async function handleTextFile(f) {
+    if (!f) return;
+    const content = await f.text();
+    setFile(f);
+    setFileContent(content);
   }
 
   function addAll() {
@@ -834,6 +980,8 @@ Rules:
     setPreview(prev => prev.map(p => p.id === id ? { ...p, [field]: val } : p));
   }
 
+  function resetTab(t) { setTab(t); setPreview([]); setEstimate(null); setPendingAction(null); }
+
   return (
     <div className="modal-backdrop" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal" style={{maxWidth: 700}}>
@@ -844,26 +992,33 @@ Rules:
         <div style={{borderBottom:'1px solid var(--border)'}}>
           <div className="tab-bar" style={{padding:'0 24px', marginBottom:0}}>
             {[['text','Text / Paste'],['image','Photo / Scan'],['file','File Upload']].map(([k,l]) => (
-              <div key={k} className={`tab ${tab===k?'active':''}`} onClick={() => { setTab(k); setPreview([]); }}>{l}</div>
+              <div key={k} className={`tab ${tab===k?'active':''}`} onClick={() => resetTab(k)}>{l}</div>
             ))}
           </div>
         </div>
 
         <div className="modal-body">
-          {tab === 'text' && (
+          {tab === 'text' && !estimate && (
             <>
               <div className="form-group">
                 <label className="form-label">Paste notes, meeting minutes, or any text</label>
                 <textarea className="form-textarea" value={text} onChange={e => setText(e.target.value)}
                   placeholder="Dump everything here — calls, notes, site observations, meeting notes. AI will extract the action items." style={{minHeight:140}} />
               </div>
-              <button className="btn btn-primary" onClick={processText} disabled={processing || !text.trim()}>
-                {processing ? '⟳ Processing...' : '◆ Extract Action Items'}
-              </button>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+                <button className="btn btn-primary" onClick={() => requestProcess('text')} disabled={processing || !text.trim()}>
+                  {processing ? '⟳ Processing...' : '◆ Extract Action Items'}
+                </button>
+                {text.trim() && (
+                  <span style={{fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'var(--text3)'}}>
+                    ~{(SYSTEM_PROMPT_TOKENS + estimateTextTokens(text)).toLocaleString()} est. input tokens
+                  </span>
+                )}
+              </div>
             </>
           )}
 
-          {tab === 'image' && (
+          {tab === 'image' && !estimate && (
             <>
               {!imageData ? (
                 <div
@@ -883,18 +1038,21 @@ Rules:
                 <>
                   <img src={`data:${imageMediaType};base64,${imageData}`}
                     style={{width:'100%',maxHeight:200,objectFit:'contain',borderRadius:3,border:'1px solid var(--border)',marginBottom:12}} alt="Notebook" />
-                  <div style={{display:'flex',gap:8,marginBottom:12}}>
-                    <button className="btn btn-primary" onClick={processImage} disabled={processing}>
+                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
+                    <button className="btn btn-primary" onClick={() => requestProcess('image')} disabled={processing}>
                       {processing ? '⟳ Processing...' : '◆ Read & Extract'}
                     </button>
                     <button className="btn" onClick={() => { setImageData(null); setPreview([]); }}>Remove</button>
+                    <span style={{marginLeft:'auto',fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'var(--text3)'}}>
+                      ~{(SYSTEM_PROMPT_TOKENS + estimateImageTokens(imageData)).toLocaleString()} est. input tokens
+                    </span>
                   </div>
                 </>
               )}
             </>
           )}
 
-          {tab === 'file' && (
+          {tab === 'file' && !estimate && (
             <>
               {!file ? (
                 <div className="upload-zone" onClick={() => fileRef.current?.click()}>
@@ -902,21 +1060,29 @@ Rules:
                   <div className="upload-text">Upload a text file</div>
                   <div className="upload-sub">TXT / MD / CSV</div>
                   <input ref={fileRef} type="file" accept=".txt,.md,.csv,.text" style={{display:'none'}}
-                    onChange={e => setFile(e.target.files[0])} />
+                    onChange={e => handleTextFile(e.target.files[0])} />
                 </div>
               ) : (
                 <>
                   <div className="processing-bar" style={{marginBottom:12}}>
                     <span style={{fontSize:18}}>📄</span>
                     <span className="processing-text" style={{color:'var(--text)'}}>{file.name}</span>
-                    <button className="btn btn-ghost btn-sm btn-danger" style={{marginLeft:'auto'}} onClick={() => { setFile(null); setPreview([]); }}>Remove</button>
+                    <span style={{marginLeft:'auto',fontFamily:'IBM Plex Mono,monospace',fontSize:10,color:'var(--text3)'}}>
+                      ~{(SYSTEM_PROMPT_TOKENS + estimateTextTokens(fileContent)).toLocaleString()} tokens
+                    </span>
+                    <button className="btn btn-ghost btn-sm btn-danger" onClick={() => { setFile(null); setFileContent(''); setPreview([]); }}>Remove</button>
                   </div>
-                  <button className="btn btn-primary" onClick={processFile} disabled={processing}>
+                  <button className="btn btn-primary" onClick={() => requestProcess('file')} disabled={processing}>
                     {processing ? '⟳ Processing...' : '◆ Extract Action Items'}
                   </button>
                 </>
               )}
             </>
+          )}
+
+          {/* Cost Confirmation Panel */}
+          {estimate && !processing && (
+            <CostConfirmPanel estimate={estimate} onConfirm={confirmAndRun} onCancel={cancelEstimate} />
           )}
 
           {processing && (
@@ -926,7 +1092,7 @@ Rules:
             </div>
           )}
 
-          {preview.length > 0 && (
+          {preview.length > 0 && !estimate && (
             <>
               <hr className="divider" />
               <div style={{marginBottom:12,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
@@ -962,7 +1128,7 @@ Rules:
           )}
         </div>
 
-        {preview.length > 0 && (
+        {preview.length > 0 && !estimate && (
           <div className="modal-footer">
             <button className="btn" onClick={onClose}>Cancel</button>
             <button className="btn btn-primary" onClick={addAll}>
