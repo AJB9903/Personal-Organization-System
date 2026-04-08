@@ -895,8 +895,11 @@ Rules:
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
     const raw = data.content.map(b => b.text || '').join('');
-    const clean = raw.replace(/```json|```/g, '').trim();
-    return JSON.parse(clean);
+    // Strip fences then extract first JSON array, tolerant of surrounding text
+    const stripped = raw.replace(/```json|```/g, '').trim();
+    const match = stripped.match(/\[[\s\S]*\]/);
+    if (!match) throw new Error('No action items found — try rephrasing your dump.');
+    return JSON.parse(match[0]);
   }
 
   // ── Request estimate → show confirm → then run
